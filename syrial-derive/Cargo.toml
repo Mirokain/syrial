@@ -6,7 +6,7 @@ description = "Procedural macros for the syrial serialization library"
 license = "MIT"
 repository = "https://github.com/Mirokain/syrial"
 keywords = ["serialization", "macros", "rust"]
-categories = ["development-tools::procedural-macros"]
+categories = ["development-tools"]
 
 [lib]
 proc-macro = true
