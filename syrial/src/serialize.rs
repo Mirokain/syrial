@@ -22,6 +22,7 @@
 
 
 use std::io::{Read, Write};
+use std::collections::HashMap;
 use crate::stream;
 
 #[derive(Debug)]
@@ -202,6 +203,39 @@ pub fn read_compact_size(stream: &mut stream::Stream) -> Result<u64> {
             stream.read(&mut size)?;
             Ok(u64::from_le_bytes(size))
         }
+    }
+}
+
+impl<K: Serialize, V: Serialize> Serialize for HashMap<K, V> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        write_compact_size(stream, self.len() as u64);
+        for (key, value) in self {
+            key.serialize_into(stream);
+            value.serialize_into(stream);
+        }
+    }
+
+    fn serialize_size(&self) -> usize {
+        get_size_of_compact_size(self.len() as u64)
+            + self.iter().map(|(k, v)| k.serialize_size() + v.serialize_size()).sum::<usize>()
+    }
+}
+
+impl<K: Deserialize + Serialize + Eq + std::hash::Hash, V: Deserialize + Serialize> Deserialize for HashMap<K, V> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        let size = read_compact_size(stream)? as usize;
+        let mut map = HashMap::with_capacity(size);
+        for _ in 0..size {
+            let key = K::deserialize(stream)?;
+            let value = V::deserialize(stream)?;
+            map.insert(key, value);
+        }
+        Ok(map)
+    }
+
+    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+        *self = Self::deserialize(stream)?;
+        Ok(())
     }
 }
 
@@ -402,7 +436,7 @@ impl Serialize for () {
 mod tests {
     use super::*;
     use crate::stream::Stream;
-    use crate::serialize::{Serialize, Deserialize}; // Fixed import
+    use crate::serialize::{Serialize, Deserialize};
 
     #[derive(Debug, PartialEq)]
     pub struct Test {
@@ -621,5 +655,16 @@ mod tests {
         val_some.serialize_into(&mut stream_some);
         let deserialized_some = Option::<u32>::deserialize(&mut stream_some).unwrap();
         assert_eq!(val_some, deserialized_some);
+    }
+
+    #[test]
+    fn test_hashmap() {
+        let mut map = HashMap::new();
+        map.insert(1u8, String::from("one"));
+        map.insert(2u8, String::from("two"));
+        let mut stream = Stream::default();
+        map.serialize_into(&mut stream);
+        let result = HashMap::<u8, String>::deserialize(&mut stream).unwrap();
+        assert_eq!(map, result);
     }
 }
