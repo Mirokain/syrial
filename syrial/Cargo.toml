@@ -1,0 +1,14 @@
+[package]
+name = "syrial"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust library for streaming and serialization"
+license = "MIT"
+repository = "https://github.com/Mirokain/syrial"
+keywords = ["serialization", "stream", "rust"]
+categories = ["data-structures", "encoding"]
+
+[dependencies]
+
+[dev-dependencies]
+syrial-derive = { path = "../syrial-derive" }

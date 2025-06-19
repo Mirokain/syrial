@@ -1,0 +1,3 @@
+[workspace]
+members = ["syrial", "syrial-derive"]
+resolver = "2"

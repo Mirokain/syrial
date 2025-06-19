@@ -1,0 +1,18 @@
+[package]
+name = "syrial-derive"
+version = "0.1.0"
+edition = "2021"
+description = "Procedural macros for the syrial serialization library"
+license = "MIT"
+repository = "https://github.com/Mirokain/syrial"
+keywords = ["serialization", "macros", "rust"]
+categories = ["development-tools::procedural-macros"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["derive", "parsing"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+syrial = { path = "../syrial" }
