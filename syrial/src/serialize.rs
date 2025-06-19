@@ -260,6 +260,35 @@ impl Deserialize for String {
     }
 }
 
+
+macro_rules! impl_serialize_for_to_string {
+    ($t:path) => {
+        impl Serialize for $t {
+            fn serialize_into(&self, stream: &mut stream::Stream) {
+                self.to_string().serialize_into(stream)
+            }
+
+            fn serialize_size(&self) -> usize {
+                self.to_string().serialize_size()
+            }
+        }
+
+        impl Deserialize for $t {
+            fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+                let s = String::deserialize(stream)?;
+                s.parse().map_err(|_| SerializationError::InvalidFormat)
+            }
+
+            fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+                *self = Self::deserialize(stream)?;
+                Ok(())
+            }
+        }
+    };
+}
+
+
+
 impl<K: Serialize, V: Serialize> Serialize for (K, V) {
     fn serialize_into(&self, stream: &mut stream::Stream) {
         self.0.serialize_into(stream);
@@ -530,5 +559,16 @@ mod tests {
         let mut vec_serialized = vec.serialize();
         let vec_deserialized = Vec::<u32>::deserialize(&mut vec_serialized).unwrap();
         assert_eq!(vec, vec_deserialized);
+    }
+
+    #[test]
+    fn test_impl_serialize_for_to_string() {
+        use std::net::IpAddr;
+        impl_serialize_for_to_string!(IpAddr);
+
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        let mut ip_serialized = ip.serialize();
+        let ip_recovered: IpAddr = IpAddr::deserialize(&mut ip_serialized).unwrap();
+        assert_eq!(ip, ip_recovered);
     }
 }
