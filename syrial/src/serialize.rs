@@ -287,6 +287,42 @@ macro_rules! impl_serialize_for_to_string {
     };
 }
 
+impl<T: Serialize> Serialize for Option<T> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        match self {
+            Some(val) => {
+                1u8.serialize_into(stream);
+                val.serialize_into(stream);
+            }
+            None => {
+                0u8.serialize_into(stream);
+            }
+        }
+    }
+    fn serialize_size(&self) -> usize {
+        1 + match self {
+            Some(val) => val.serialize_size(),
+            None => 0,
+        }
+    }
+}
+
+impl<T: Deserialize> Deserialize for Option<T> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        let tag = u8::deserialize(stream)?;
+        match tag {
+            0 => Ok(None),
+            1 => Ok(Some(T::deserialize(stream)?)),
+            _ => Err(SerializationError::InvalidFormat),
+        }
+    }
+    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+        *self = Self::deserialize(stream)?;
+        Ok(())
+    }
+}
+
+
 
 
 impl<K: Serialize, V: Serialize> Serialize for (K, V) {
@@ -570,5 +606,20 @@ mod tests {
         let mut ip_serialized = ip.serialize();
         let ip_recovered: IpAddr = IpAddr::deserialize(&mut ip_serialized).unwrap();
         assert_eq!(ip, ip_recovered);
+    }
+
+    #[test]
+    fn test_option_some_and_none() {
+        let val_none: Option<u32> = None;
+        let mut stream_none = Stream::default();
+        val_none.serialize_into(&mut stream_none);
+        let deserialized_none = Option::<u32>::deserialize(&mut stream_none).unwrap();
+        assert_eq!(val_none, deserialized_none);
+
+        let val_some: Option<u32> = Some(12345);
+        let mut stream_some = Stream::default();
+        val_some.serialize_into(&mut stream_some);
+        let deserialized_some = Option::<u32>::deserialize(&mut stream_some).unwrap();
+        assert_eq!(val_some, deserialized_some);
     }
 }
