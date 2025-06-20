@@ -103,6 +103,20 @@ pub trait Deserialize: Sized {
 }
 
 
+
+// Macro to define a default implementation of the `deserialize_into` method
+// for types implementing the `Deserialize` trait.
+//
+// This method simply replaces `self` with a newly deserialized value from the stream.
+macro_rules! impl_deserialize_into {
+    () => {
+        fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+            *self = Self::deserialize(stream)?;
+            Ok(())
+        }
+    };
+}
+
 // Macro to implement Serialize and Deserialize for primitive types
 // that have fixed-size representations convertible to/from little-endian bytes.
 macro_rules! serialize_primitive {
@@ -131,11 +145,7 @@ macro_rules! serialize_primitive {
                 Ok(Self::from_le_bytes(buf))
             }
 
-            fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                // Replace the current value with the newly deserialized value
-                *self = Self::deserialize(stream)?;
-                Ok(())
-            }
+            impl_deserialize_into!();
         }
     };
 }
@@ -167,11 +177,7 @@ macro_rules! serialize_fixed_array {
                 Ok(array)
             }
 
-            fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                // Replace the current array with the newly deserialized one.
-                *self = Self::deserialize(stream)?;
-                Ok(())
-            }
+            impl_deserialize_into!();
         }
     };
 }
@@ -210,11 +216,7 @@ macro_rules! impl_serialize_tuple {
                     ))
                 }
 
-                fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                    // Replace the current tuple with a newly deserialized one.
-                    *self = Self::deserialize(stream)?;
-                    Ok(())
-                }
+                impl_deserialize_into!();
             }
         )+
     };
@@ -383,11 +385,7 @@ impl<K: Deserialize + Serialize + Eq + std::hash::Hash, V: Deserialize + Seriali
         Ok(map)
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Replaces self with a newly deserialized HashMap.
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 // Serialize implementation for Vec<T> where T implements Serialize.
@@ -424,11 +422,7 @@ impl<T: Deserialize + Serialize> Deserialize for Vec<T> {
         Ok(vec)
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Replace self with a new vector deserialized from the stream.
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 // Serialize implementation for String.
@@ -459,11 +453,7 @@ impl Deserialize for String {
         Ok(String::from_utf8(buffer)?)
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Replace self with the newly deserialized string.
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 
@@ -495,11 +485,7 @@ macro_rules! impl_serialize_for_to_string {
                 s.parse().map_err(|_| SerializationError::InvalidFormat)
             }
 
-            fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                // Deserialize a new instance and replace self with it.
-                *self = Self::deserialize(stream)?;
-                Ok(())
-            }
+            impl_deserialize_into!();
         }
     };
 }
@@ -541,11 +527,7 @@ impl<T: Deserialize> Deserialize for Option<T> {
         }
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Deserialize a new Option<T> and replace self with it
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 
@@ -577,11 +559,7 @@ impl Deserialize for bool {
         }
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Deserialize a bool and overwrite self with it
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 
