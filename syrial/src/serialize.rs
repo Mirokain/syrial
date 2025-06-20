@@ -23,6 +23,9 @@
 
 use std::io::{Read, Write};
 use std::collections::HashMap;
+use std::collections::BTreeMap;
+
+use crate::bitfield::Bitfield;
 use crate::stream;
 
 // Custom error type to represent different serialization and deserialization errors.
@@ -346,6 +349,49 @@ pub fn read_compact_size(stream: &mut stream::Stream) -> Result<u64> {
 }
 
 
+// Serialize implementation for BTreeMap<K, V>
+// where K and V both implement Serialize.
+impl<K: Serialize, V: Serialize> Serialize for BTreeMap<K, V> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        // First write the number of key-value pairs using compact size encoding.
+        write_compact_size(stream, self.len() as u64);
+        // Then serialize each key and value in order.
+        for (key, value) in self {
+            key.serialize_into(stream);
+            value.serialize_into(stream);
+        }
+    }
+
+    fn serialize_size(&self) -> usize {
+        // Size of the compact size encoding for length +
+        // sum of sizes of serialized keys and values.
+        get_size_of_compact_size(self.len() as u64)
+            + self.iter().map(|(k, v)| k.serialize_size() + v.serialize_size()).sum::<usize>()
+    }
+}
+
+// Deserialize implementation for BTreeMap<K, V>
+// where K and V implement Deserialize and Serialize,
+// and K must also implement Ord for BTreeMap.
+impl<K: Deserialize + Serialize + Ord, V: Deserialize + Serialize> Deserialize for BTreeMap<K, V> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        // Read the number of key-value pairs from the stream.
+        let size = read_compact_size(stream)? as usize;
+        // Create a new empty BTreeMap.
+        let mut map = BTreeMap::new();
+        // For each entry, deserialize key and value and insert into map.
+        for _ in 0..size {
+            let key = K::deserialize(stream)?;
+            let value = V::deserialize(stream)?;
+            map.insert(key, value);
+        }
+        Ok(map)
+    }
+
+    impl_deserialize_into!();
+}
+
+
 // Serialize implementation for HashMap<K, V>
 // where K and V both implement Serialize.
 impl<K: Serialize, V: Serialize> Serialize for HashMap<K, V> {
@@ -561,6 +607,47 @@ impl Deserialize for bool {
 
     impl_deserialize_into!();
 }
+
+
+// See bitfield.rs for the implementation.
+// Serialize implementation for Bitfield<N>.
+// where N is the fixed number of bits.
+impl<const N: usize> Serialize for Bitfield<N> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        // First write the number of bits using compact size encoding.
+        write_compact_size(stream, self.num_bits as u64);
+        // Then write the raw bytes representing the bits.
+        stream.write(&self.bits);
+    }
+
+    fn serialize_size(&self) -> usize {
+        // Size of the compact size encoding for number of bits +
+        // length of the byte array holding the bits.
+        get_size_of_compact_size(self.num_bits as u64) + self.bits.len()
+    }
+}
+
+// Deserialize implementation for Bitfield<N>.
+// where N is the fixed number of bits.
+impl<const N: usize> Deserialize for Bitfield<N> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        // Read the number of bits from the stream.
+        let num_bits = read_compact_size(stream)? as usize;
+        // Check that the number of bits matches the expected size.
+        if num_bits != N {
+            return Err(SerializationError::InvalidFormat);
+        }
+        // Calculate the number of bytes needed for the bits.
+        let byte_size = (num_bits + 7) / 8;
+        // Read the bytes from the stream into a vector.
+        let mut bits = vec![0u8; byte_size];
+        stream.read(&mut bits)?;
+        Ok(Bitfield { bits, num_bits })
+    }
+
+    impl_deserialize_into!();
+}
+
 
 
 // Implement Serialize and Deserialize for primitive numeric types.
@@ -891,6 +978,33 @@ mod tests {
         <(Test, Test, Test, Test, Test)>::deserialize(&mut stream).unwrap();
 
         assert_eq!(tuple, deserialized);
+    }
 
+    #[test]
+    fn test_btreemap() {
+        let mut map = BTreeMap::new();
+        map.insert(1, String::from("one"));
+        map.insert(2, String::from("two"));
+
+        let mut stream = Stream::default();
+        map.serialize_into(&mut stream);
+        let deserialized = BTreeMap::<u32, String>::deserialize(&mut stream).unwrap();
+
+        assert_eq!(map, deserialized);
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_bitfield() {
+        let mut bf = Bitfield::<8>::new();
+        bf.set(0, true);
+        bf.set(7, true);
+
+        let mut stream = Stream::default();
+        bf.serialize_into(&mut stream);
+        let deserialized = Bitfield::<8>::deserialize(&mut stream).unwrap();
+
+        assert_eq!(bf, deserialized);
+        assert!(deserialized.get(0) && deserialized.get(7));
     }
 }
