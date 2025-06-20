@@ -6,7 +6,7 @@ description = "A Rust library for streaming and serialization"
 license = "MIT"
 repository = "https://github.com/Mirokain/syrial"
 keywords = ["serialization", "stream", "rust"]
-categories = ["data-structures", "encoding", "serialize", "deserialize"]
+categories = ["data-structures", "encoding"]
 
 [dependencies]
 
