@@ -2,7 +2,7 @@
 
 ***Syrial*** design, with its reusable byte-level Stream buffer and compact binary encoding, might remind you the efficient serialization approach in projects like Bitcoin. It tries to offer precise control over byte manipulation, which could be helpful for protocol implementations, message parsing, storage, and other low-level data tasks.
 - A flexible and reusable Stream buffer that helps with efficient byte-level input and output.
-- `Serialize` and `Deserialize` traits supporting primitives, collections, arrays, tuples, enums, and structs  
+- `Serialize` and `Deserialize` traits supporting primitives, collections, arrays, tuples, enums, option, hashmap and structs  
 - Compact variable-length integer encoding optimized for storage efficiency  
 - Procedural macros for automatic serialization logic generation  
 - Licensed under MIT.   
@@ -292,6 +292,43 @@ assert_eq!(deser_arr4, arr4);
 assert_eq!(deser_arr32, arr32);
 ```
 
+
+### Option
+
+```rust
+let mut s = Stream::default();
+let val_none: Option<u32> = None;
+let val_some: Option<u32> = Some(12345);
+
+// Serialize
+s.stream_in(&val_none)?;
+s.stream_in(&val_some)?;
+
+// Deserialize and verify
+let deser_none: Option<u32> = s.stream_out()?;
+let deser_some: Option<u32> = s.stream_out()?;
+assert_eq!(deser_none, val_none);
+assert_eq!(deser_some, val_some);
+```
+
+
+### HashMap
+
+```rust
+let mut s = Stream::default();
+let mut map = HashMap::new();
+map.insert(1u8, String::from("one"));
+map.insert(2u8, String::from("two"));
+
+// Serialize
+s.stream_in(&map)?;
+
+// Deserialize and verify
+let deser_map: HashMap<u8, String> = s.stream_out()?;
+assert_eq!(deser_map, map);
+```
+
+
 ### Custom Types
 
 ```rust
@@ -313,4 +350,3 @@ s.stream_in(&p)?;
 let p2: Point = s.stream_out()?;
 assert_eq!(p2, p);
 ```
-
