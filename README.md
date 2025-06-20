@@ -12,7 +12,7 @@
 ## ✨ Install 
 ```toml
 [dependencies]
-syrial = "0.1.0"
+syrial = "0.2.0"
 syrial-derive = "0.1.0"
 ```
 
