@@ -27,53 +27,9 @@ use std::collections::BTreeMap;
 
 use crate::bitfield::Bitfield;
 use crate::stream;
+use crate::error::SerializationError;
 
-// Custom error type to represent different serialization and deserialization errors.
-#[derive(Debug)]
-pub enum SerializationError {
-    // Error caused by I/O operations (e.g., reading or writing to a stream).
-    Io(std::io::Error),
-    // Error caused by invalid UTF-8 sequences when decoding strings.
-    Utf8(std::string::FromUtf8Error),
-    // Generic error indicating data format is invalid or unexpected.
-    InvalidFormat,
-}
 
-// Implement user-friendly errors -> string
-impl std::fmt::Display for SerializationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            SerializationError::Io(err) => write!(f, "IO error: {}", err),
-            SerializationError::Utf8(err) => write!(f, "UTF-8 decoding error: {}", err),
-            SerializationError::InvalidFormat => write!(f, "Invalid data format"),
-        }
-    }
-}
-
-// Standar Error trait to allow chaining and compatibility with other Rust errors.
-impl std::error::Error for SerializationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            SerializationError::Io(err) => Some(err),       // IO error is the source
-            SerializationError::Utf8(err) => Some(err),     // UTF-8 error is the source
-            SerializationError::InvalidFormat => None,      // no error for this variant
-        }
-    }
-}
-
-// Allow automatic conversion from std::io::Error into SerializationError::Io
-impl From<std::io::Error> for SerializationError {
-    fn from(err: std::io::Error) -> Self {
-        SerializationError::Io(err)
-    }
-}
-
-// Allow automatic conversion from std::string::FromUtf8Error into SerializationError::Utf8
-impl From<std::string::FromUtf8Error> for SerializationError {
-    fn from(err: std::string::FromUtf8Error) -> Self {
-        SerializationError::Utf8(err)
-    }
-}
 
 // Define a convenient alias for Result<T, SerializationError>
 pub type Result<T> = std::result::Result<T, SerializationError>;
