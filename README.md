@@ -329,6 +329,60 @@ assert_eq!(deser_map, map);
 ```
 
 
+### BTreeMap
+
+```rust
+let mut map = BTreeMap::new();
+map.insert(1, String::from("one"));
+map.insert(2, String::from("two"));
+
+let mut stream = Stream::default();
+map.serialize_into(&mut stream);
+let deserialized = BTreeMap::<u32, String>::deserialize(&mut stream).unwrap();
+
+assert_eq!(map, deserialized);
+```
+
+### Bitfield
+
+```rust
+let mut bf = Bitfield::<8>::new();
+bf.set(0, true);
+bf.set(7, true);
+
+let mut stream = Stream::default();
+bf.serialize_into(&mut stream);
+let deserialized = Bitfield::<8>::deserialize(&mut stream).unwrap();
+
+assert_eq!(bf, deserialized);
+assert!(deserialized.get(0) && deserialized.get(7));
+```
+
+### Box 
+
+```rust
+let boxed_i32: Box<i32> = Box::new(42);
+
+let mut stream = Stream::default();
+boxed_i32.serialize_into(&mut stream);
+let deserialized_i32 = Box::<i32>::deserialize(&mut stream).unwrap();
+
+assert_eq!(boxed_i32, deserialized_i32);
+```
+
+### Arc 
+
+```rust
+let arc_i32: Arc<i32> = Arc::new(42);
+
+let mut stream = Stream::default();
+arc_i32.serialize_into(&mut stream);
+let deserialized_i32 = Arc::<i32>::deserialize(&mut stream).unwrap();
+
+assert_eq!(*arc_i32, *deserialized_i32);
+```
+
+
 ### Custom Types
 
 ```rust
