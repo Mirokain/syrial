@@ -24,6 +24,7 @@
 use std::io::{Read, Write};
 use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::bitfield::Bitfield;
 use crate::stream;
@@ -179,6 +180,62 @@ macro_rules! impl_serialize_tuple {
             }
         )+
     };
+}
+
+
+// Serialize implementation for Box<T> where T implements Serialize
+impl<T: Serialize> Serialize for Box<T> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        // Delegate serialization to the inner value
+        (**self).serialize_into(stream);
+    }
+
+    fn serialize_size(&self) -> usize {
+        // Delegate size calculation to the inner value
+        (**self).serialize_size()
+    }
+}
+
+// Deserialize implementation for Box<T> where T implements Deserialize
+impl<T: Deserialize> Deserialize for Box<T> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        // Deserialize the inner value and wrap it in a Box
+        Ok(Box::new(T::deserialize(stream)?))
+    }
+
+    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+        // Replace the inner value by deserializing a new one
+        *self = Box::new(T::deserialize(stream)?);
+        Ok(())
+    }
+}
+
+
+// Serialize implementation for Arc<T> where T implements Serialize
+impl<T: Serialize> Serialize for Arc<T> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        // Delegate serialization to the inner value
+        (**self).serialize_into(stream);
+    }
+
+    fn serialize_size(&self) -> usize {
+        // Delegate size calculation to the inner value
+        (**self).serialize_size()
+    }
+}
+
+// Deserialize implementation for Arc<T> where T implements Deserialize
+impl<T: Deserialize> Deserialize for Arc<T> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        // Deserialize the inner value and wrap it in an Arc
+        Ok(Arc::new(T::deserialize(stream)?))
+    }
+
+    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+        // Replace the inner value by deserializing a new one and wrapping it in a new Arc
+        *self = Arc::new(T::deserialize(stream)?);
+        Ok(())
+    }
 }
 
 
@@ -926,5 +983,35 @@ mod tests {
 
         assert_eq!(bf, deserialized);
         assert!(deserialized.get(0) && deserialized.get(7));
+    }
+
+    fn test_box() {
+        let boxed_i32: Box<i32> = Box::new(42);
+        let mut stream = Stream::default();
+        boxed_i32.serialize_into(&mut stream);
+        let deserialized_i32 = Box::<i32>::deserialize(&mut stream).unwrap();
+        assert_eq!(boxed_i32, deserialized_i32);
+
+        let boxed_test: Box<Test> = Box::new(sample_test(123));
+        let mut stream = Stream::default();
+        boxed_test.serialize_into(&mut stream);
+        let deserialized_test = Box::<Test>::deserialize(&mut stream).unwrap();
+        assert_eq!(boxed_test, deserialized_test);
+    }
+
+    fn test_arc() {
+        let arc_i32: Arc<i32> = Arc::new(42);
+        let mut stream = Stream::default();
+        arc_i32.serialize_into(&mut stream);
+        let deserialized_i32 = Arc::<i32>::deserialize(&mut stream).unwrap();
+        assert_eq!(*arc_i32, *deserialized_i32);
+
+
+        let arc_test: Arc<Test> = Arc::new(sample_test(123));
+        let mut stream = Stream::default();
+        arc_test.serialize_into(&mut stream);
+        let deserialized_test = Arc::<Test>::deserialize(&mut stream).unwrap();
+        assert_eq!(arc_test, deserialized_test);
+        
     }
 }
