@@ -23,54 +23,14 @@
 
 use std::io::{Read, Write};
 use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use crate::bitfield::Bitfield;
 use crate::stream;
+use crate::error::SerializationError;
 
-// Custom error type to represent different serialization and deserialization errors.
-#[derive(Debug)]
-pub enum SerializationError {
-    // Error caused by I/O operations (e.g., reading or writing to a stream).
-    Io(std::io::Error),
-    // Error caused by invalid UTF-8 sequences when decoding strings.
-    Utf8(std::string::FromUtf8Error),
-    // Generic error indicating data format is invalid or unexpected.
-    InvalidFormat,
-}
 
-// Implement user-friendly errors -> string
-impl std::fmt::Display for SerializationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            SerializationError::Io(err) => write!(f, "IO error: {}", err),
-            SerializationError::Utf8(err) => write!(f, "UTF-8 decoding error: {}", err),
-            SerializationError::InvalidFormat => write!(f, "Invalid data format"),
-        }
-    }
-}
-
-// Standar Error trait to allow chaining and compatibility with other Rust errors.
-impl std::error::Error for SerializationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            SerializationError::Io(err) => Some(err),       // IO error is the source
-            SerializationError::Utf8(err) => Some(err),     // UTF-8 error is the source
-            SerializationError::InvalidFormat => None,      // no error for this variant
-        }
-    }
-}
-
-// Allow automatic conversion from std::io::Error into SerializationError::Io
-impl From<std::io::Error> for SerializationError {
-    fn from(err: std::io::Error) -> Self {
-        SerializationError::Io(err)
-    }
-}
-
-// Allow automatic conversion from std::string::FromUtf8Error into SerializationError::Utf8
-impl From<std::string::FromUtf8Error> for SerializationError {
-    fn from(err: std::string::FromUtf8Error) -> Self {
-        SerializationError::Utf8(err)
-    }
-}
 
 // Define a convenient alias for Result<T, SerializationError>
 pub type Result<T> = std::result::Result<T, SerializationError>;
@@ -103,6 +63,20 @@ pub trait Deserialize: Sized {
 }
 
 
+
+// Macro to define a default implementation of the `deserialize_into` method
+// for types implementing the `Deserialize` trait.
+//
+// This method simply replaces `self` with a newly deserialized value from the stream.
+macro_rules! impl_deserialize_into {
+    () => {
+        fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+            *self = Self::deserialize(stream)?;
+            Ok(())
+        }
+    };
+}
+
 // Macro to implement Serialize and Deserialize for primitive types
 // that have fixed-size representations convertible to/from little-endian bytes.
 macro_rules! serialize_primitive {
@@ -131,11 +105,7 @@ macro_rules! serialize_primitive {
                 Ok(Self::from_le_bytes(buf))
             }
 
-            fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                // Replace the current value with the newly deserialized value
-                *self = Self::deserialize(stream)?;
-                Ok(())
-            }
+            impl_deserialize_into!();
         }
     };
 }
@@ -167,11 +137,7 @@ macro_rules! serialize_fixed_array {
                 Ok(array)
             }
 
-            fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                // Replace the current array with the newly deserialized one.
-                *self = Self::deserialize(stream)?;
-                Ok(())
-            }
+            impl_deserialize_into!();
         }
     };
 }
@@ -210,14 +176,66 @@ macro_rules! impl_serialize_tuple {
                     ))
                 }
 
-                fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                    // Replace the current tuple with a newly deserialized one.
-                    *self = Self::deserialize(stream)?;
-                    Ok(())
-                }
+                impl_deserialize_into!();
             }
         )+
     };
+}
+
+
+// Serialize implementation for Box<T> where T implements Serialize
+impl<T: Serialize> Serialize for Box<T> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        // Delegate serialization to the inner value
+        (**self).serialize_into(stream);
+    }
+
+    fn serialize_size(&self) -> usize {
+        // Delegate size calculation to the inner value
+        (**self).serialize_size()
+    }
+}
+
+// Deserialize implementation for Box<T> where T implements Deserialize
+impl<T: Deserialize> Deserialize for Box<T> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        // Deserialize the inner value and wrap it in a Box
+        Ok(Box::new(T::deserialize(stream)?))
+    }
+
+    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+        // Replace the inner value by deserializing a new one
+        *self = Box::new(T::deserialize(stream)?);
+        Ok(())
+    }
+}
+
+
+// Serialize implementation for Arc<T> where T implements Serialize
+impl<T: Serialize> Serialize for Arc<T> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        // Delegate serialization to the inner value
+        (**self).serialize_into(stream);
+    }
+
+    fn serialize_size(&self) -> usize {
+        // Delegate size calculation to the inner value
+        (**self).serialize_size()
+    }
+}
+
+// Deserialize implementation for Arc<T> where T implements Deserialize
+impl<T: Deserialize> Deserialize for Arc<T> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        // Deserialize the inner value and wrap it in an Arc
+        Ok(Arc::new(T::deserialize(stream)?))
+    }
+
+    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
+        // Replace the inner value by deserializing a new one and wrapping it in a new Arc
+        *self = Arc::new(T::deserialize(stream)?);
+        Ok(())
+    }
 }
 
 
@@ -344,50 +362,48 @@ pub fn read_compact_size(stream: &mut stream::Stream) -> Result<u64> {
 }
 
 
-// Serialize implementation for HashMap<K, V>
-// where K and V both implement Serialize.
-impl<K: Serialize, V: Serialize> Serialize for HashMap<K, V> {
-    fn serialize_into(&self, stream: &mut stream::Stream) {
-        // First write the number of key-value pairs using compact size encoding.
-        write_compact_size(stream, self.len() as u64);
-        // Then serialize each key and value in order.
-        for (key, value) in self {
-            key.serialize_into(stream);
-            value.serialize_into(stream);
+// Macro to implement Serialize and Deserialize traits for map types like BTreeMap and HashMap.
+// Accepts a map type, an initialization expression, and key constraints, e.g., BTreeMap, |_: usize| BTreeMap::new(), Ord.
+macro_rules! impl_serialize_map {
+    // Pattern: a map type identifier, an initialization expression, and one or more key constraint identifiers.
+    ($map_type:ident, $init:expr, $($key_constraint:tt)*) => {
+        // Implement Serialize trait for the map with generic types K and V.
+        impl<K: Serialize, V: Serialize> Serialize for $map_type<K, V> {
+            fn serialize_into(&self, stream: &mut stream::Stream) {
+                // Write the number of key-value pairs to the stream using compact size encoding.
+                write_compact_size(stream, self.len() as u64);
+                // Serialize each key and value in order.
+                for (key, value) in self {
+                    key.serialize_into(stream);
+                    value.serialize_into(stream);
+                }
+            }
+
+            fn serialize_size(&self) -> usize {
+                // Sum up the serialized sizes of the length prefix and all key-value pairs.
+                get_size_of_compact_size(self.len() as u64)
+                    + self.iter().map(|(k, v)| k.serialize_size() + v.serialize_size()).sum::<usize>()
+            }
         }
-    }
 
-    fn serialize_size(&self) -> usize {
-        // Size of the compact size encoding for length +
-        // sum of sizes of serialized keys and values.
-        get_size_of_compact_size(self.len() as u64)
-            + self.iter().map(|(k, v)| k.serialize_size() + v.serialize_size()).sum::<usize>()
-    }
-}
+        // Implement Deserialize trait for the same map type.
+        impl<K: Deserialize + Serialize + $($key_constraint)*, V: Deserialize + Serialize> Deserialize for $map_type<K, V> {
+            fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+                // Deserialize the number of key-value pairs and each key-value pair from the stream,
+                // collecting results into a map to return.
+                let size = read_compact_size(stream)? as usize;
+                let mut map = $init(size);
+                for _ in 0..size {
+                    let key = K::deserialize(stream)?;
+                    let value = V::deserialize(stream)?;
+                    map.insert(key, value);
+                }
+                Ok(map)
+            }
 
-// Deserialize implementation for HashMap<K, V>
-// where K and V implement Deserialize and Serialize,
-// and K must also implement Eq and Hash for HashMap.
-impl<K: Deserialize + Serialize + Eq + std::hash::Hash, V: Deserialize + Serialize> Deserialize for HashMap<K, V> {
-    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
-        // Read the number of key-value pairs from the stream.
-        let size = read_compact_size(stream)? as usize;
-        // Pre-allocate HashMap with capacity.
-        let mut map = HashMap::with_capacity(size);
-        // For each entry, deserialize key and value and insert into map.
-        for _ in 0..size {
-            let key = K::deserialize(stream)?;
-            let value = V::deserialize(stream)?;
-            map.insert(key, value);
+            impl_deserialize_into!();
         }
-        Ok(map)
-    }
-
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Replaces self with a newly deserialized HashMap.
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    };
 }
 
 // Serialize implementation for Vec<T> where T implements Serialize.
@@ -424,11 +440,7 @@ impl<T: Deserialize + Serialize> Deserialize for Vec<T> {
         Ok(vec)
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Replace self with a new vector deserialized from the stream.
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 // Serialize implementation for String.
@@ -459,11 +471,7 @@ impl Deserialize for String {
         Ok(String::from_utf8(buffer)?)
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Replace self with the newly deserialized string.
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 
@@ -495,11 +503,7 @@ macro_rules! impl_serialize_for_to_string {
                 s.parse().map_err(|_| SerializationError::InvalidFormat)
             }
 
-            fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-                // Deserialize a new instance and replace self with it.
-                *self = Self::deserialize(stream)?;
-                Ok(())
-            }
+            impl_deserialize_into!();
         }
     };
 }
@@ -541,11 +545,7 @@ impl<T: Deserialize> Deserialize for Option<T> {
         }
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Deserialize a new Option<T> and replace self with it
-        *self = Self::deserialize(stream)?;
-        Ok(())
-    }
+    impl_deserialize_into!();
 }
 
 
@@ -577,12 +577,49 @@ impl Deserialize for bool {
         }
     }
 
-    fn deserialize_into(&mut self, stream: &mut stream::Stream) -> Result<()> {
-        // Deserialize a bool and overwrite self with it
-        *self = Self::deserialize(stream)?;
-        Ok(())
+    impl_deserialize_into!();
+}
+
+
+// See bitfield.rs for the implementation.
+// Serialize implementation for Bitfield<N>.
+// where N is the fixed number of bits.
+impl<const N: usize> Serialize for Bitfield<N> {
+    fn serialize_into(&self, stream: &mut stream::Stream) {
+        // First write the number of bits using compact size encoding.
+        write_compact_size(stream, self.num_bits as u64);
+        // Then write the raw bytes representing the bits.
+        stream.write(&self.bits);
+    }
+
+    fn serialize_size(&self) -> usize {
+        // Size of the compact size encoding for number of bits +
+        // length of the byte array holding the bits.
+        get_size_of_compact_size(self.num_bits as u64) + self.bits.len()
     }
 }
+
+// Deserialize implementation for Bitfield<N>.
+// where N is the fixed number of bits.
+impl<const N: usize> Deserialize for Bitfield<N> {
+    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+        // Read the number of bits from the stream.
+        let num_bits = read_compact_size(stream)? as usize;
+        // Check that the number of bits matches the expected size.
+        if num_bits != N {
+            return Err(SerializationError::InvalidFormat);
+        }
+        // Calculate the number of bytes needed for the bits.
+        let byte_size = (num_bits + 7) / 8;
+        // Read the bytes from the stream into a vector.
+        let mut bits = vec![0u8; byte_size];
+        stream.read(&mut bits)?;
+        Ok(Bitfield { bits, num_bits })
+    }
+
+    impl_deserialize_into!();
+}
+
 
 
 // Implement Serialize and Deserialize for primitive numeric types.
@@ -626,6 +663,11 @@ impl_serialize_tuple!(
     (A, B, C, D, E, F, G, H, I),
     (A, B, C, D, E, F, G, H, I, J)
 );
+
+
+// Implement Serialize and Deserialize for BTreeMap and HashMap
+impl_serialize_map!(BTreeMap, |_: usize| BTreeMap::new(), Ord);
+impl_serialize_map!(HashMap, HashMap::with_capacity, Eq + std::hash::Hash);
 
 
 
@@ -913,6 +955,63 @@ mod tests {
         <(Test, Test, Test, Test, Test)>::deserialize(&mut stream).unwrap();
 
         assert_eq!(tuple, deserialized);
+    }
 
+    #[test]
+    fn test_btreemap() {
+        let mut map = BTreeMap::new();
+        map.insert(1, String::from("one"));
+        map.insert(2, String::from("two"));
+
+        let mut stream = Stream::default();
+        map.serialize_into(&mut stream);
+        let deserialized = BTreeMap::<u32, String>::deserialize(&mut stream).unwrap();
+
+        assert_eq!(map, deserialized);
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_bitfield() {
+        let mut bf = Bitfield::<8>::new();
+        bf.set(0, true);
+        bf.set(7, true);
+
+        let mut stream = Stream::default();
+        bf.serialize_into(&mut stream);
+        let deserialized = Bitfield::<8>::deserialize(&mut stream).unwrap();
+
+        assert_eq!(bf, deserialized);
+        assert!(deserialized.get(0) && deserialized.get(7));
+    }
+
+    fn test_box() {
+        let boxed_i32: Box<i32> = Box::new(42);
+        let mut stream = Stream::default();
+        boxed_i32.serialize_into(&mut stream);
+        let deserialized_i32 = Box::<i32>::deserialize(&mut stream).unwrap();
+        assert_eq!(boxed_i32, deserialized_i32);
+
+        let boxed_test: Box<Test> = Box::new(sample_test(123));
+        let mut stream = Stream::default();
+        boxed_test.serialize_into(&mut stream);
+        let deserialized_test = Box::<Test>::deserialize(&mut stream).unwrap();
+        assert_eq!(boxed_test, deserialized_test);
+    }
+
+    fn test_arc() {
+        let arc_i32: Arc<i32> = Arc::new(42);
+        let mut stream = Stream::default();
+        arc_i32.serialize_into(&mut stream);
+        let deserialized_i32 = Arc::<i32>::deserialize(&mut stream).unwrap();
+        assert_eq!(*arc_i32, *deserialized_i32);
+
+
+        let arc_test: Arc<Test> = Arc::new(sample_test(123));
+        let mut stream = Stream::default();
+        arc_test.serialize_into(&mut stream);
+        let deserialized_test = Arc::<Test>::deserialize(&mut stream).unwrap();
+        assert_eq!(arc_test, deserialized_test);
+        
     }
 }

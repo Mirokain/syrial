@@ -21,13 +21,13 @@
 // SOFTWARE.
 
 
+pub mod error;
 pub mod stream;
 pub mod serialize;
+pub mod bitfield;
+
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    
-    
-    
+    use super::*;   
 }
