@@ -305,89 +305,48 @@ pub fn read_compact_size(stream: &mut stream::Stream) -> Result<u64> {
 }
 
 
-// Serialize implementation for BTreeMap<K, V>
-// where K and V both implement Serialize.
-impl<K: Serialize, V: Serialize> Serialize for BTreeMap<K, V> {
-    fn serialize_into(&self, stream: &mut stream::Stream) {
-        // First write the number of key-value pairs using compact size encoding.
-        write_compact_size(stream, self.len() as u64);
-        // Then serialize each key and value in order.
-        for (key, value) in self {
-            key.serialize_into(stream);
-            value.serialize_into(stream);
+// Macro to implement Serialize and Deserialize traits for map types like BTreeMap and HashMap.
+// Accepts a map type, an initialization expression, and key constraints, e.g., BTreeMap, |_: usize| BTreeMap::new(), Ord.
+macro_rules! impl_serialize_map {
+    // Pattern: a map type identifier, an initialization expression, and one or more key constraint identifiers.
+    ($map_type:ident, $init:expr, $($key_constraint:tt)*) => {
+        // Implement Serialize trait for the map with generic types K and V.
+        impl<K: Serialize, V: Serialize> Serialize for $map_type<K, V> {
+            fn serialize_into(&self, stream: &mut stream::Stream) {
+                // Write the number of key-value pairs to the stream using compact size encoding.
+                write_compact_size(stream, self.len() as u64);
+                // Serialize each key and value in order.
+                for (key, value) in self {
+                    key.serialize_into(stream);
+                    value.serialize_into(stream);
+                }
+            }
+
+            fn serialize_size(&self) -> usize {
+                // Sum up the serialized sizes of the length prefix and all key-value pairs.
+                get_size_of_compact_size(self.len() as u64)
+                    + self.iter().map(|(k, v)| k.serialize_size() + v.serialize_size()).sum::<usize>()
+            }
         }
-    }
 
-    fn serialize_size(&self) -> usize {
-        // Size of the compact size encoding for length +
-        // sum of sizes of serialized keys and values.
-        get_size_of_compact_size(self.len() as u64)
-            + self.iter().map(|(k, v)| k.serialize_size() + v.serialize_size()).sum::<usize>()
-    }
-}
+        // Implement Deserialize trait for the same map type.
+        impl<K: Deserialize + Serialize + $($key_constraint)*, V: Deserialize + Serialize> Deserialize for $map_type<K, V> {
+            fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
+                // Deserialize the number of key-value pairs and each key-value pair from the stream,
+                // collecting results into a map to return.
+                let size = read_compact_size(stream)? as usize;
+                let mut map = $init(size);
+                for _ in 0..size {
+                    let key = K::deserialize(stream)?;
+                    let value = V::deserialize(stream)?;
+                    map.insert(key, value);
+                }
+                Ok(map)
+            }
 
-// Deserialize implementation for BTreeMap<K, V>
-// where K and V implement Deserialize and Serialize,
-// and K must also implement Ord for BTreeMap.
-impl<K: Deserialize + Serialize + Ord, V: Deserialize + Serialize> Deserialize for BTreeMap<K, V> {
-    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
-        // Read the number of key-value pairs from the stream.
-        let size = read_compact_size(stream)? as usize;
-        // Create a new empty BTreeMap.
-        let mut map = BTreeMap::new();
-        // For each entry, deserialize key and value and insert into map.
-        for _ in 0..size {
-            let key = K::deserialize(stream)?;
-            let value = V::deserialize(stream)?;
-            map.insert(key, value);
+            impl_deserialize_into!();
         }
-        Ok(map)
-    }
-
-    impl_deserialize_into!();
-}
-
-
-// Serialize implementation for HashMap<K, V>
-// where K and V both implement Serialize.
-impl<K: Serialize, V: Serialize> Serialize for HashMap<K, V> {
-    fn serialize_into(&self, stream: &mut stream::Stream) {
-        // First write the number of key-value pairs using compact size encoding.
-        write_compact_size(stream, self.len() as u64);
-        // Then serialize each key and value in order.
-        for (key, value) in self {
-            key.serialize_into(stream);
-            value.serialize_into(stream);
-        }
-    }
-
-    fn serialize_size(&self) -> usize {
-        // Size of the compact size encoding for length +
-        // sum of sizes of serialized keys and values.
-        get_size_of_compact_size(self.len() as u64)
-            + self.iter().map(|(k, v)| k.serialize_size() + v.serialize_size()).sum::<usize>()
-    }
-}
-
-// Deserialize implementation for HashMap<K, V>
-// where K and V implement Deserialize and Serialize,
-// and K must also implement Eq and Hash for HashMap.
-impl<K: Deserialize + Serialize + Eq + std::hash::Hash, V: Deserialize + Serialize> Deserialize for HashMap<K, V> {
-    fn deserialize(stream: &mut stream::Stream) -> Result<Self> {
-        // Read the number of key-value pairs from the stream.
-        let size = read_compact_size(stream)? as usize;
-        // Pre-allocate HashMap with capacity.
-        let mut map = HashMap::with_capacity(size);
-        // For each entry, deserialize key and value and insert into map.
-        for _ in 0..size {
-            let key = K::deserialize(stream)?;
-            let value = V::deserialize(stream)?;
-            map.insert(key, value);
-        }
-        Ok(map)
-    }
-
-    impl_deserialize_into!();
+    };
 }
 
 // Serialize implementation for Vec<T> where T implements Serialize.
@@ -647,6 +606,11 @@ impl_serialize_tuple!(
     (A, B, C, D, E, F, G, H, I),
     (A, B, C, D, E, F, G, H, I, J)
 );
+
+
+// Implement Serialize and Deserialize for BTreeMap and HashMap
+impl_serialize_map!(BTreeMap, |_: usize| BTreeMap::new(), Ord);
+impl_serialize_map!(HashMap, HashMap::with_capacity, Eq + std::hash::Hash);
 
 
 
